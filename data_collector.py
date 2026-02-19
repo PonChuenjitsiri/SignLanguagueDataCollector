@@ -5,9 +5,14 @@ import os, time
 from datetime import datetime
 from scipy.interpolate import interp1d
 
-SERIAL_PORT = "COM3"
-BAUD_RATE = 115200
-TARGET_FRAMES = 50 
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+SERIAL_PORT = os.getenv('SERIAL_PORT')
+BAUD_RATE = os.getenv('BAUD_RATE')
+TARGET_FRAMES = os.getenv('TARGET_FRAMES')
 DATA_DIR = "dataset"
 
 def resample_gesture(data, target=50):
@@ -21,28 +26,34 @@ def resample_gesture(data, target=50):
     f = interp1d(old_x, non_zero_data, axis=0, kind='linear', fill_value="extrapolate")
     return f(new_x)
 
-def get_stats(label):
-    path = os.path.join(DATA_DIR, label)
-    if not os.path.exists(path): os.makedirs(path)
-    count = len([f for f in os.listdir(path) if f.endswith('.csv')])
-    return count
-
-def delete_last_file(gesture):
+def delete_last_file(name, gesture):
     path = os.path.join(DATA_DIR, gesture)
     if not os.path.exists(path): return
     
-    files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.csv')]
+    prefix = f"{name}_{gesture}_"
+    files = [os.path.join(path, f) for f in os.listdir(path) if f.startswith(prefix) and f.endswith('.csv')]
+    
     if not files:
-        print(f" [!] No files to delete in '{gesture}'")
+        print(f" [!] No files to delete for user '{name}' in '{gesture}'")
         return
 
     latest_file = max(files, key=os.path.getctime)
     try:
         os.remove(latest_file)
         print(f"\n [DELETE] Removed: {os.path.basename(latest_file)}")
-        print(f" [STATUS] Current files: {get_stats(gesture)}")
+        print(f" [STATUS] Current files for {name}: {get_user_seq(name, gesture)}")
     except Exception as e:
         print(f" [ERROR] Could not delete file: {e}")
+
+def get_user_seq(name, gesture):
+    path = os.path.join(DATA_DIR, gesture)
+    if not os.path.exists(path): 
+        return 0
+    
+    prefix = f"{name}_{gesture}_"
+    
+    count = len([f for f in os.listdir(path) if f.startswith(prefix) and f.endswith('.csv')])
+    return count
 
 def main():
     name = input("Enter User Name: ").strip() or "iq"
@@ -64,7 +75,7 @@ def main():
         # Clear any leftover junk data in the buffer
         ser.reset_input_buffer()
         print(f"\n[READY] Collecting '{gesture}' for {name}")
-        print(f"[STATUS] Current files: {get_stats(gesture)}")
+        print(f"[STATUS] Current files: {get_user_seq(name, gesture)}")
         print("--------------------------------------------------")
 
         raw_buffer = []
@@ -79,7 +90,7 @@ def main():
             if not line: continue
 
             if "DELETE_SIGNAL" in line:
-                delete_last_file(gesture)
+                delete_last_file(name, gesture)
                 print("\nReady for next take...")
                 raw_buffer = []
                 is_reading_data = False
@@ -117,7 +128,7 @@ def main():
                     
                     if raw_buffer is not None:
                         date_str = datetime.now().strftime("%m%d%y")
-                        seq = get_stats(gesture) + 1
+                        seq = get_user_seq(name, gesture) + 1
                         filename = f"{name}_{gesture}_{date_str}_{seq:03d}.csv"
                         filepath = os.path.join(DATA_DIR, gesture, filename)
                         
@@ -146,7 +157,7 @@ def main():
                         print("="*40)
                         
                         # print(f" [SAVED] {filepath} -> Resampled to {TARGET_FRAMES} frames")
-                        print(f" [TOTAL] {gesture}: {get_stats(gesture)} files")
+                        print(f" [TOTAL] {name} - {gesture}: {get_user_seq(name, gesture)} files")
                     else:
                          print(" [ERROR] Data empty after trimming zeros.")
                 else:
