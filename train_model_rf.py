@@ -1,18 +1,18 @@
 import numpy as np
 import pandas as pd
 import os
-# import xgboost as xgb  <-- ไม่ใช้แล้ว
-from sklearn.ensemble import RandomForestClassifier # <-- เพิ่มตัวนี้
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split, StratifiedKFold, cross_val_score
 from sklearn.metrics import accuracy_score, classification_report
 import joblib
+from scipy.interpolate import interp1d
 
 # ======================================================
 # 1. Configuration
 # ======================================================
 DATA_DIR = "dataset"
 EXPECTED_FRAMES = 50 
-MODEL_NAME = "gesture_model_rf.pkl" # <-- เปลี่ยนนามสกุลเป็น .pkl หรือ .joblib
+MODEL_NAME = "gesture_model_rf.pkl"
 
 LABELS_MAP = {
     0: "hello",
@@ -34,38 +34,30 @@ LABELS_MAP = {
 INV_LABELS_MAP = {v: k for k, v in LABELS_MAP.items()}
 
 # ======================================================
-# 2. Load & Flatten Data
+# 2. Resample Function
 # ======================================================
-def load_dataset():
-    X, y = [], []
-    print(f"--- Loading raw data ({EXPECTED_FRAMES} frames x 22 sensors) ---")
-    for label_name in LABELS_MAP.values():
-        path = os.path.join(DATA_DIR, label_name)
-        if not os.path.exists(path): continue
-        files = [f for f in os.listdir(path) if f.endswith('.csv')]
-        print(f"   {label_name}: {len(files)} files")
-        
-        for file in files:
-            try:
-                df = pd.read_csv(os.path.join(path, file))
-                if len(df) == EXPECTED_FRAMES:
-                    # คลี่ข้อมูล 50x22 เป็นเวกเตอร์แถวเดียว 1,100 ฟีเจอร์
-                    X.append(extract_advanced_features(df))
-                    y.append(INV_LABELS_MAP[label_name])
-            except Exception as e:
-                print(f"      Error reading {file}: {e}")
-                
-    return np.array(X), np.array(y)
+def resample_gesture(data, target=50):
+    data_np = np.array(data)
+    non_zero_data = data_np[~np.all(data_np == 0, axis=1)]
+    current_len = non_zero_data.shape[0]
+    if current_len < 2: 
+        return None
+    old_x = np.linspace(0, current_len - 1, num=current_len)
+    new_x = np.linspace(0, current_len - 1, num=target)
+    f = interp1d(old_x, non_zero_data, axis=0, kind='linear', fill_value="extrapolate")
+    return f(new_x)
 
-def extract_advanced_features(df):
-    raw_data = df.values # shape (50, 22)
+# ======================================================
+# 3. Feature Extraction
+# ======================================================
+def extract_advanced_features(raw_data):
+    # ปรับให้รับค่าเป็น numpy array (เพราะได้มาจาก resample_gesture)
+    # raw_data shape: (50, 22)
     
-    # 1. Raw Data Flatten (Original) -> 1100 features
+    # 1. Raw Data Flatten -> 1100 features
     feat_raw = raw_data.flatten()
     
     # 2. Velocity (ความเปลี่ยนแปลงเทียบเฟรมต่อเฟรม) -> 22 sensors
-    # ใช้ np.diff แล้วหาค่าเฉลี่ยความเร็ว หรือจะ flatten ความเร็วทั้งหมดก็ได้
-    # แต่เพื่อประหยัด feature แนะนำให้เอา 'Mean Velocity' และ 'Max Velocity' ของแต่ละเซนเซอร์
     velocity = np.diff(raw_data, axis=0) # shape (49, 22)
     feat_vel_mean = np.mean(velocity, axis=0) # เฉลี่ยความเร็วแต่ละนิ้ว
     feat_vel_std = np.std(velocity, axis=0)   # ความสม่ำเสมอของความเร็ว
@@ -90,21 +82,56 @@ def extract_advanced_features(df):
     return features
 
 # ======================================================
-# 3. Training Process (Random Forest)
+# 4. Load & Process Data
+# ======================================================
+def load_dataset():
+    X, y = [], []
+    print(f"--- Loading raw data and Resampling to {EXPECTED_FRAMES} frames ---")
+    for label_name in LABELS_MAP.values():
+        path = os.path.join(DATA_DIR, label_name)
+        if not os.path.exists(path): continue
+        files = [f for f in os.listdir(path) if f.endswith('.csv')]
+        print(f"   {label_name}: {len(files)} files")
+        
+        for file in files:
+            try:
+                df = pd.read_csv(os.path.join(path, file))
+                
+                # นำข้อมูลดิบมารีแซมเปิลให้ได้ 50 Frames ก่อน
+                resampled_data = resample_gesture(df.values, target=EXPECTED_FRAMES)
+                
+                if resampled_data is not None:
+                    # นำข้อมูลที่รีแซมเปิลแล้ว ไปสกัดฟีเจอร์ 1,210 ตัว
+                    features = extract_advanced_features(resampled_data)
+                    X.append(features)
+                    y.append(INV_LABELS_MAP[label_name])
+                else:
+                    print(f"      [SKIP] {file}: Data too short or empty after removing zeros.")
+                    
+            except Exception as e:
+                print(f"      [ERROR] reading {file}: {e}")
+                
+    return np.array(X), np.array(y)
+
+# ======================================================
+# 5. Training Process (Random Forest)
 # ======================================================
 X, y = load_dataset()
+
+if len(X) == 0:
+    print("\n[!] Error: ไม่พบข้อมูลสำหรับการเทรนเลยครับ")
+    exit()
 
 # แบ่งข้อมูล 85/15
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.15, random_state=42, stratify=y)
 
-print(f"\nFeature Count: {X.shape[1]}")
+print(f"\nFeature Count: {X.shape[1]} (Expected 1210)")
 print(f"Training on {len(X_train)} samples...")
 
-# --- ส่วนที่เปลี่ยนแปลง: สร้างโมเดล Random Forest ---
 model = RandomForestClassifier(
     n_estimators=100,      # จำนวนต้นไม้
-    criterion='gini',      # เกณฑ์การวัด (gini หรือ entropy)
-    max_depth=None,        # ปล่อยให้ลึกสุดได้ (หรือจะกำหนดเช่น 10, 20 ก็ได้เพื่อกัน Overfit)
+    criterion='gini',      # เกณฑ์การวัด
+    max_depth=None,        # ปล่อยให้ลึกสุดได้
     random_state=42,
     n_jobs=-1              # ใช้ทุก CPU core เพื่อความเร็ว
 )
@@ -113,11 +140,10 @@ model = RandomForestClassifier(
 kfold = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
 scores = cross_val_score(model, X, y, cv=kfold, scoring='accuracy')
 
-print(f"Accuracy per fold: {scores}")
-print(f"Mean Accuracy: {scores.mean()*100:.2f}%")
+print(f"\nAccuracy per fold: {scores}")
+print(f"Mean CV Accuracy: {scores.mean()*100:.2f}%")
 
-# --- ส่วนที่เปลี่ยนแปลง: การ Fit ---
-# Random Forest ไม่ใช้ eval_set ในคำสั่ง fit เหมือน XGBoost
+# Fit model
 model.fit(X_train, y_train)
 
 # Evaluation
@@ -125,11 +151,10 @@ y_pred = model.predict(X_test)
 acc = accuracy_score(y_test, y_pred)
 
 print("\n" + "="*40)
-print(f" Final Accuracy: {acc*100:.2f}%")
+print(f" Final Test Accuracy: {acc*100:.2f}%")
 print("="*40)
 print(classification_report(y_test, y_pred, target_names=LABELS_MAP.values()))
 
-# --- ส่วนที่เปลี่ยนแปลง: การ Save ---
-# ใช้ joblib แทน model.save_model
+# Save model
 joblib.dump(model, MODEL_NAME)
 print(f"\n[DONE] Model saved as '{MODEL_NAME}'")
