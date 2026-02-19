@@ -1,0 +1,165 @@
+import serial
+import pandas as pd
+import numpy as np
+import os, time
+from datetime import datetime
+from scipy.interpolate import interp1d
+
+SERIAL_PORT = "COM3"
+BAUD_RATE = 115200
+TARGET_FRAMES = 50 
+DATA_DIR = "dataset"
+
+def resample_gesture(data, target=50):
+    data_np = np.array(data)
+    non_zero_data = data_np[~np.all(data_np == 0, axis=1)]
+    current_len = non_zero_data.shape[0]
+    if current_len < 2: 
+        return None
+    old_x = np.linspace(0, current_len - 1, num=current_len)
+    new_x = np.linspace(0, current_len - 1, num=target)
+    f = interp1d(old_x, non_zero_data, axis=0, kind='linear', fill_value="extrapolate")
+    return f(new_x)
+
+def get_stats(label):
+    path = os.path.join(DATA_DIR, label)
+    if not os.path.exists(path): os.makedirs(path)
+    count = len([f for f in os.listdir(path) if f.endswith('.csv')])
+    return count
+
+def delete_last_file(gesture):
+    path = os.path.join(DATA_DIR, gesture)
+    if not os.path.exists(path): return
+    
+    files = [os.path.join(path, f) for f in os.listdir(path) if f.endswith('.csv')]
+    if not files:
+        print(f" [!] No files to delete in '{gesture}'")
+        return
+
+    latest_file = max(files, key=os.path.getctime)
+    try:
+        os.remove(latest_file)
+        print(f"\n [DELETE] Removed: {os.path.basename(latest_file)}")
+        print(f" [STATUS] Current files: {get_stats(gesture)}")
+    except Exception as e:
+        print(f" [ERROR] Could not delete file: {e}")
+
+def main():
+    name = input("Enter User Name: ").strip() or "iq"
+    gesture = input("Enter Gesture Label: ").strip() or "hello"
+    
+    try:
+        ser = serial.Serial()
+        ser.port = SERIAL_PORT
+        ser.baudrate = BAUD_RATE
+        ser.timeout = 1
+        
+        # Disable hardware flow control/reset signals
+        ser.setDTR(False)
+        ser.setRTS(False)
+        
+        # Open the port safely
+        ser.open()
+        
+        # Clear any leftover junk data in the buffer
+        ser.reset_input_buffer()
+        print(f"\n[READY] Collecting '{gesture}' for {name}")
+        print(f"[STATUS] Current files: {get_stats(gesture)}")
+        print("--------------------------------------------------")
+
+        raw_buffer = []
+        is_reading_data = False
+
+        while True:
+            try:
+                line = ser.readline().decode('utf-8', errors='ignore').strip()
+            except:
+                continue
+                
+            if not line: continue
+
+            if "DELETE_SIGNAL" in line:
+                delete_last_file(gesture)
+                print("\nReady for next take...")
+                raw_buffer = []
+                is_reading_data = False
+
+            elif "START_SIGNAL" in line:
+                print(f"[*] Recording...", end="", flush=True)
+                raw_buffer = []
+                is_reading_data = True
+            
+            elif "CANCEL_SIGNAL" in line:
+                print(" -> [CANCELLED]")
+                is_reading_data = False
+                raw_buffer = []
+
+            elif "DISCARD_SIGNAL" in line:
+                print(" -> [DISCARDED: Too Short]")
+                is_reading_data = False
+                raw_buffer = []
+
+            elif is_reading_data and (line.startswith("S ") or (line and line[0].isdigit()) or line.startswith("-")):
+                parts = [x for x in line.split() if x not in ["S", "E"]]
+                
+                if len(parts) == 22:
+                    try:
+                        raw_buffer.append([float(x) for x in parts])
+                    except ValueError:
+                        pass
+
+            elif "SUCCESS_SIGNAL" in line:
+                actual_frames = len(raw_buffer)
+                print(f" [OK] Received {actual_frames} raw frames.")
+                
+                if actual_frames >= 5:
+                    # final_data = resample_gesture(raw_buffer, TARGET_FRAMES)
+                    
+                    if raw_buffer is not None:
+                        date_str = datetime.now().strftime("%m%d%y")
+                        seq = get_stats(gesture) + 1
+                        filename = f"{name}_{gesture}_{date_str}_{seq:03d}.csv"
+                        filepath = os.path.join(DATA_DIR, gesture, filename)
+                        
+                        cols = [f'L_F{i}' for i in range(1,6)] + ['L_Ax','L_Ay','L_Az','L_Gx','L_Gy','L_Gz'] + \
+                               [f'R_F{i}' for i in range(1,6)] + ['R_Ax','R_Ay','R_Az','R_Gx','R_Gy','R_Gz']
+                        
+                        df = pd.DataFrame(raw_buffer, columns=cols)
+                        df.to_csv(filepath, index=False)
+
+                        print("\n" + "="*40)
+                        print(f" [FLEX MAX] Gesture: {gesture}")
+                        print("-" * 40)
+                        
+                        # แยก List ของคอลัมน์ที่ต้องการ
+                        left_flex = [f'L_F{i}' for i in range(1, 6)]
+                        right_flex = [f'R_F{i}' for i in range(1, 6)]
+                        
+                        # หาค่า Max
+                        max_df = df.max()
+                        
+                        # แสดงผลแบบแบ่งฝั่ง ซ้าย | ขวา
+                        print("  LEFT HAND (F1-F5)  |  RIGHT HAND (F1-F5)")
+                        left_vals = ", ".join([f"{max_df[c]:4.0f}" for c in left_flex])
+                        right_vals = ", ".join([f"{max_df[c]:4.0f}" for c in right_flex])
+                        print(f"  {left_vals}  |  {right_vals}")
+                        print("="*40)
+                        
+                        # print(f" [SAVED] {filepath} -> Resampled to {TARGET_FRAMES} frames")
+                        print(f" [TOTAL] {gesture}: {get_stats(gesture)} files")
+                    else:
+                         print(" [ERROR] Data empty after trimming zeros.")
+                else:
+                    print(" [ERROR] Raw data too short, not saved.")
+                
+                is_reading_data = False
+                print("\nReady for next take...")
+
+    except KeyboardInterrupt:
+        print("\nExit...")
+        if 'ser' in locals() and ser.is_open: ser.close()
+    except Exception as e:
+        print(f"\nError: {e}")
+
+if __name__ == "__main__":
+    main()
