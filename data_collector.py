@@ -12,19 +12,7 @@ load_dotenv()
 
 SERIAL_PORT = os.getenv('SERIAL_PORT')
 BAUD_RATE = os.getenv('BAUD_RATE')
-TARGET_FRAMES = os.getenv('TARGET_FRAMES')
 DATA_DIR = "dataset"
-
-def resample_gesture(data, target=50):
-    data_np = np.array(data)
-    non_zero_data = data_np[~np.all(data_np == 0, axis=1)]
-    current_len = non_zero_data.shape[0]
-    if current_len < 2: 
-        return None
-    old_x = np.linspace(0, current_len - 1, num=current_len)
-    new_x = np.linspace(0, current_len - 1, num=target)
-    f = interp1d(old_x, non_zero_data, axis=0, kind='linear', fill_value="extrapolate")
-    return f(new_x)
 
 def delete_last_file(name, gesture):
     path = os.path.join(DATA_DIR, gesture)
@@ -124,7 +112,6 @@ def main():
                 print(f" [OK] Received {actual_frames} raw frames.")
                 
                 if actual_frames >= 5:
-                    # final_data = resample_gesture(raw_buffer, TARGET_FRAMES)
                     
                     if raw_buffer is not None:
                         date_str = datetime.now().strftime("%m%d%y")
@@ -156,7 +143,6 @@ def main():
                         print(f"  {left_vals}  |  {right_vals}")
                         print("="*40)
                         
-                        # print(f" [SAVED] {filepath} -> Resampled to {TARGET_FRAMES} frames")
                         print(f" [TOTAL] {name} - {gesture}: {get_user_seq(name, gesture)} files")
                     else:
                          print(" [ERROR] Data empty after trimming zeros.")
