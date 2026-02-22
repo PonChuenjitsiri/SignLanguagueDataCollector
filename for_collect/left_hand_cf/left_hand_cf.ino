@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <MPU9250_asukiaaa.h>
 #include <vector>
+#include <Preferences.h>
 
 HardwareSerial HC12(1);
 #define HC12_RX 20
@@ -9,13 +10,16 @@ HardwareSerial HC12(1);
 #define PIN_BUTTON 5
 #define PIN_LED 10 
 
-int t_flex = 100; 
-int t_accel[3] = {25, 25, 25};      
-int t_gyro[3]  = {2000, 2000, 2000}; 
+// --- Thresholds ---
+const float T_ACCEL = 0.25; 
+const float T_GYRO = 20.0;  
+int t_flex = 300;           
 
 int flexMin[5] = {0, 0, 0, 0, 0};      
 int flexMax[5] = {4095, 4095, 4095, 4095, 4095};
 bool isCalibrated = false;
+
+Preferences preferences;
 
 struct GloveData {
     uint16_t flex[5];
@@ -37,6 +41,29 @@ const uint8_t SIG_CANCEL = 0xEE;
 unsigned long btnPressStart = 0;
 bool isBtnHeld = false;
 bool actionTriggered = false;
+
+void saveCalibrationToFlash() {
+    preferences.begin("glove-cal", false);
+    preferences.putBytes("fMin", flexMin, sizeof(flexMin));
+    preferences.putBytes("fMax", flexMax, sizeof(flexMax));
+    preferences.putInt("tFlex", t_flex);
+    preferences.putBool("isCal", true);
+    preferences.end();
+    Serial.println(">> Flex Calibration Saved to Flash!");
+}
+
+void loadCalibrationFromFlash() {
+    preferences.begin("glove-cal", true);
+    isCalibrated = preferences.getBool("isCal", false);
+    if (isCalibrated) {
+        preferences.getBytes("fMin", flexMin, sizeof(flexMin));
+        preferences.getBytes("fMax", flexMax, sizeof(flexMax));
+        t_flex = preferences.getInt("tFlex", 200);
+        Serial.println(">> Calibration Loaded from Flash!");
+        Serial.printf(">> Flex Threshold is set to: %d\n", t_flex);
+    }
+    preferences.end();
+}
 
 void blinkLED(int times, int duration) {
     pinMode(PIN_LED, OUTPUT);
@@ -75,51 +102,37 @@ void calibrateSensors() {
 
     for (int round = 1; round <= 5; round++) {
         Serial.printf(">> ROUND %d/5\n", round);
+        
+        Serial.println("   [ACTION] OPEN hand -> Press Button");
         waitForUserAction();
         for(int i=0; i<5; i++) sumOpen[i] += analogRead(i); 
         
+        Serial.println("   [ACTION] CLOSE hand -> Press Button");
         waitForUserAction();
         for(int i=0; i<5; i++) sumClose[i] += analogRead(i); 
         
         blinkLED(2, 100);
     }
 
+    Serial.println("\n=== CALIBRATION RESULTS ===");
     for(int i=0; i<5; i++) {
         flexMin[i] = sumOpen[i] / 5;
         flexMax[i] = sumClose[i] / 5;
-        if (flexMin[i] == flexMax[i]) flexMax[i] += 1; // Safety
+        if (flexMin[i] == flexMax[i]) flexMax[i] += 1; 
+        Serial.printf("  F%d Raw Avg Min: %d | Avg Max: %d\n", i, flexMin[i], flexMax[i]);
     }
 
-    Serial.println("Keep Still 4s...");
-    blinkLED(1, 1000); 
-
-    long maxDiffAccel[3] = {0,0,0};
-    long maxDiffGyro[3] = {0,0,0};
-    GloveData prev, curr;
-    readMPU(prev);
+    t_flex = 200; 
     
-    unsigned long startT = millis();
-    while(millis() - startT < 4000) {
-        readMPU(curr);
-        for(int k=0; k<3; k++) {
-            long diffA = abs(curr.accel[k] - prev.accel[k]);
-            if(diffA > maxDiffAccel[k]) maxDiffAccel[k] = diffA;
-            long diffG = abs(curr.gyro[k] - prev.gyro[k]);
-            if(diffG > maxDiffGyro[k]) maxDiffGyro[k] = diffG;
-        }
-        prev = curr;
-        delay(10);
-    }
+    Serial.println("\n-----------------------------------------");
+    Serial.println(">> Flex Mapped Range : 0 - 2000");
+    Serial.printf(">> NEW Flex Threshold: %d (10%% of range)\n", t_flex);
+    Serial.println("-----------------------------------------");
 
-    for(int k=0; k<3; k++) {
-        t_accel[k] = max((int)(maxDiffAccel[k] * 1.5), 20);
-        t_gyro[k]  = max((int)(maxDiffGyro[k] * 1.5), 500);
-    }
-    
     isCalibrated = true;
-    Serial.println("DONE");
+    saveCalibrationToFlash();
+    
     blinkLED(3, 200);
-
     while(digitalRead(PIN_BUTTON) == HIGH) delay(10);
     isBtnHeld = false;
     actionTriggered = false;
@@ -128,9 +141,10 @@ void calibrateSensors() {
 bool checkMovement(GloveData current) {
     if (storage.empty()) return true;
     for(int i=0; i<5; i++) if (abs((int)current.flex[i] - (int)lastData.flex[i]) > t_flex) return true;
+    
     for(int k=0; k<3; k++) {
-        if (abs(current.accel[k] - lastData.accel[k]) > t_accel[k]) return true;
-        if (abs(current.gyro[k] - lastData.gyro[k]) > t_gyro[k]) return true;
+        if (abs(current.accel[k] - lastData.accel[k]) > (T_ACCEL * 100)) return true;
+        if (abs(current.gyro[k] - lastData.gyro[k]) > (T_GYRO * 100)) return true;
     }
     return false;
 }
@@ -139,11 +153,14 @@ void setup() {
     Serial.begin(115200);
     HC12.begin(115200, SERIAL_8N1, HC12_RX, HC12_TX);
     analogReadResolution(12);
+    
     pinMode(PIN_BUTTON, INPUT);
     pinMode(PIN_LED, OUTPUT); 
     Wire.begin(6, 7);
     mpu.setWire(&Wire); mpu.beginAccel(); mpu.beginGyro();
+    
     Serial.println("--- LEFT HAND READY ---");
+    loadCalibrationFromFlash();
 }
 
 void sendDataToMaster() {
@@ -184,10 +201,9 @@ void loop() {
                 for(int i=0; i<5; i++) {
                     int raw = analogRead(i);
                     if (isCalibrated) {
-                        // 1. Constrain: ตัดค่าเกินทิ้ง
                         int clipped = constrain(raw, min(flexMin[i], flexMax[i]), max(flexMin[i], flexMax[i]));
-                        // 2. Map: บังคับช่วง 0-1000
-                        d.flex[i] = map(clipped, flexMin[i], flexMax[i], 0, 1000);
+                        // *** เปลี่ยน Range ขยายเป็น 0 - 2000 ***
+                        d.flex[i] = map(clipped, flexMin[i], flexMax[i], 0, 2000);
                     } else {
                         d.flex[i] = raw;
                     }
@@ -201,7 +217,7 @@ void loop() {
     }
 
     int btnState = digitalRead(PIN_BUTTON);
-    if (btnState == HIGH) {
+    if (btnState == HIGH) { 
         if (!isBtnHeld) {
             isBtnHeld = true;
             btnPressStart = millis();
@@ -217,7 +233,7 @@ void loop() {
                 }
             }
         }
-    } else {
+    } else { 
         if (isBtnHeld) {
             if (!actionTriggered && (millis() - btnPressStart > 50)) {
                 HC12.write(SIG_CANCEL);
