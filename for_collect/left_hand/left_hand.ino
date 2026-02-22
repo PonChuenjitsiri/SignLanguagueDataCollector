@@ -138,7 +138,7 @@ bool checkMovement(GloveData current) {
 void setup() {
     Serial.begin(115200);
     HC12.begin(115200, SERIAL_8N1, HC12_RX, HC12_TX);
-    analogReadResolution(12); // ชัดเจนว่า 0-4095
+    analogReadResolution(12);
     pinMode(PIN_BUTTON, INPUT);
     pinMode(PIN_LED, OUTPUT); 
     Wire.begin(6, 7);
@@ -201,7 +201,7 @@ void loop() {
     }
 
     int btnState = digitalRead(PIN_BUTTON);
-    if (btnState == HIGH) { // กด
+    if (btnState == HIGH) {
         if (!isBtnHeld) {
             isBtnHeld = true;
             btnPressStart = millis();
@@ -217,7 +217,7 @@ void loop() {
                 }
             }
         }
-    } else { // ปล่อย
+    } else {
         if (isBtnHeld) {
             if (!actionTriggered && (millis() - btnPressStart > 50)) {
                 HC12.write(SIG_CANCEL);

@@ -10,8 +10,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SERIAL_PORT = os.getenv('SERIAL_PORT')
-BAUD_RATE = os.getenv('BAUD_RATE')
+SERIAL_PORT = "COM3"
+BAUD_RATE = 115200
 DATA_DIR = "dataset"
 
 def delete_last_file(name, gesture):
@@ -116,6 +116,8 @@ def main():
                     if raw_buffer is not None:
                         date_str = datetime.now().strftime("%m%d%y")
                         seq = get_user_seq(name, gesture) + 1
+                        gesture_dir = os.path.join(DATA_DIR, gesture)
+                        os.makedirs(gesture_dir, exist_ok=True)
                         filename = f"{name}_{gesture}_{date_str}_{seq:03d}.csv"
                         filepath = os.path.join(DATA_DIR, gesture, filename)
                         
