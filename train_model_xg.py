@@ -11,8 +11,8 @@ import json
 # ======================================================
 # 1. Configuration
 # ======================================================
-DATA_DIR = "dataset" #
-EXPECTED_FRAMES = 100 
+DATA_DIR = "dataset_cf" #
+EXPECTED_FRAMES = 70 
 MODEL_NAME = "gesture_model.json"
 LABELS_FILE = "labels_map.json"
 
@@ -93,7 +93,7 @@ if len(X) == 0:
     print("\n[!] Error: ไม่พบข้อมูลสำหรับการเทรนเลยครับ")
     exit()
 
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.15, random_state=42, stratify=y)
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42, stratify=y)
 
 print(f"\nFeature Count: {X.shape[1]}")
 print(f"Training on {len(X_train)} samples...")

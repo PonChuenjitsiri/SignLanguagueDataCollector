@@ -207,6 +207,11 @@ void setup() {
 
 void loop() {
     int btnState = digitalRead(PIN_BUTTON); 
+//    static int lastBtnState = -1;
+//        if (btnState != lastBtnState) {
+//            Serial.printf("Button State Changed: %d\n", btnState);
+//            lastBtnState = btnState;
+//        }
     if (btnState == HIGH) { 
         if (!isBtnHeld) {
             isBtnHeld = true;

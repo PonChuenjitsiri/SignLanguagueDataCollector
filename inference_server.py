@@ -1,3 +1,5 @@
+import json
+
 import serial
 import pandas as pd
 import numpy as np
@@ -14,31 +16,32 @@ import io
 SERIAL_PORT = "COM3"
 BAUD_RATE = 115200
 MODEL_PATH = "gesture_model.json"
-TARGET_FRAMES = 100  # ต้องตรงกับตอนเทรน
+TARGET_FRAMES = 70  # ต้องตรงกับตอนเทรน
 
 # ตารางแปลชื่อ Class เป็นภาษาไทย (เสียงพูด)
 TRANSLATION_DICT = {
-    "hello": "สวัสดี",
-    "thank_you": "ขอบคุณ",
-    "sorry": "ขอโทษ",
-    "yes": "ใช่",
-    "no_right": "ไม่ค่ะ",
-    "no_left": "ไม่ครับ",
-    "help": "ช่วยด้วย",
-    "hurt": "เจ็บ",
-    "hungry_right": "หิวค่ะ",
-    "hungry_left": "หิวครับ",
-    "i_am_full": "อิ่ม",
-    "water": "น้ำ",
-    "toilet": "ห้องน้ำ",
-    "go": "ไป",
     "come_here": "มา",
-    "wait": "รอ",
-    "today": "วันนี้",
-    "tomorrow": "พรุ่งนี้",
-    "me": "ฉัน",
-    "you": "คุณ",
+    "father": "พ่อ",
+    "go": "ไป",
+    "hello": "สวัสดี",
+    "help": "ช่วยด้วย",
     "home": "บ้าน",
+    "hungry": "หิวค่ะ",
+    "hungry_left": "หิวครับ",
+    "hurt": "เจ็บ",
+    "i_am_full": "อิ่ม",
+    "me": "ฉัน",
+    "mother": "แม่",
+    "no": "ไม่ครับ",
+    "no_left": "ไม่ค่ะ",
+    "sorry": "ขอโทษ",
+    "telephone": "โทรศัพท์",
+    "thanks": "ขอบคุณ",
+    "toilet": "ห้องน้ำ",
+    "wait": "รอ",
+    "water": "น้ำ",
+    "yes": "ใช่",
+    "you": "คุณ",
 
 }
 
@@ -65,8 +68,13 @@ def speak_thai(text):
 try:
     model = xgb.XGBClassifier()
     model.load_model(MODEL_PATH)
-    # สร้าง Map ลำดับ Class ให้ตรงกับ Dictionary (0: hello, 1: thank_you, ...)
-    LABELS_MAP = {i: label for i, label in enumerate(TRANSLATION_DICT.keys())}
+    
+    # โหลด Label Map จากไฟล์ที่ได้ตอนเทรนโดยตรง
+    with open("labels_map.json", "r", encoding="utf-8") as f:
+        loaded_labels = json.load(f)
+        # แปลง key จาก string เป็น integer
+        LABELS_MAP = {int(k): v for k, v in loaded_labels.items()}
+        
     print(f"--- Model Loaded: {MODEL_PATH} ---")
 except Exception as e:
     print(f"Error loading model: {e}")

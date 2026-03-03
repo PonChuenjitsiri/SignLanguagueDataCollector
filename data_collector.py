@@ -12,7 +12,7 @@ load_dotenv()
 
 SERIAL_PORT = "COM3"
 BAUD_RATE = 115200
-DATA_DIR = "dataset"
+DATA_DIR = "dataset_cf"
 
 def delete_last_file(name, gesture):
     path = os.path.join(DATA_DIR, gesture)

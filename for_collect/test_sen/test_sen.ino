@@ -7,16 +7,16 @@
 #define PIN_LED    10  
 
 // --- Default Thresholds ---
-const int T_FLEX_DEFAULT = 300; 
-int t_flex = T_FLEX_DEFAULT;
+// สร้าง array เก็บ Threshold แยก 5 นิ้ว (ค่าเริ่มต้นก่อน Calibrate = 300)
+int t_flex[5] = {300, 300, 300, 300, 300}; 
 
 // เก็บ Threshold แยกแกน [0]=X, [1]=Y, [2]=Z
 int t_accel[3] = {30, 30, 30};      
 int t_gyro[3]  = {2000, 2000, 2000}; 
 
-// --- Calibration Variables ---
+// --- Calibration Variables ---  
 int flexMin[5] = {0, 0, 0, 0, 0};      
-int flexMax[5] = {1023, 1023, 1023, 1023, 1023};
+int flexMax[5] = {2047, 2047, 2047, 2047, 2047};
 bool isCalibrated = false;
 
 struct GloveData {
@@ -103,7 +103,7 @@ void printData(String trigger, GloveData d) {
 }
 
 void calibrateSensors() {
-    Serial.println("\n=== PART 1: FLEX SENSOR CALIBRATION ===");
+    Serial.println("\n=== FLEX SENSOR CALIBRATION ONLY ===");
     blinkLED(5, 100); 
     digitalWrite(PIN_LED, HIGH); 
 
@@ -133,75 +133,35 @@ void calibrateSensors() {
         if(round < 5) digitalWrite(PIN_LED, HIGH);
     }
 
+    Serial.println("\n--- 📊 Flex Sensor Ranges & Thresholds (15%) ---");
     for(int i=0; i<5; i++) {
         flexMin[i] = sumOpen[i] / 5;
         flexMax[i] = sumClose[i] / 5;
-        if (abs(flexMax[i] - flexMin[i]) < 10) flexMax[i] = flexMin[i] + 100; 
-    }
-    
-    // --- PART 2: IMU CALIBRATION (Separate Axis) ---
-    Serial.println("\n=== PART 2: IMU NOISE CALIBRATION (Individual Axis) ===");
-    Serial.println("   [INSTRUCTION] KEEP HAND STILL FOR 4 SECONDS...");
-    
-    digitalWrite(PIN_LED, HIGH); 
-    delay(200); 
-    
-    // ตัวแปรเก็บ Max Noise แยกแกน
-    long maxDiffAccel[3] = {0, 0, 0};
-    long maxDiffGyro[3]  = {0, 0, 0};
-    
-    GloveData prevIMU;
-    readMPU(prevIMU); 
-    
-    unsigned long startCalib = millis();
-    int sampleCount = 0;
-
-    while(millis() - startCalib < 4000) {
-        GloveData currIMU;
-        readMPU(currIMU);
-
-        // เช็ค Noise แยกแกน X, Y, Z
-        for(int k=0; k<3; k++) {
-            long diffA = abs(currIMU.accel[k] - prevIMU.accel[k]);
-            if(diffA > maxDiffAccel[k]) maxDiffAccel[k] = diffA;
-
-            long diffG = abs(currIMU.gyro[k] - prevIMU.gyro[k]);
-            if(diffG > maxDiffGyro[k]) maxDiffGyro[k] = diffG;
+        
+        // คำนวณ Range ของแต่ละนิ้ว (ความต่างระหว่างแบกับกำ)
+        int range = abs(flexMax[i] - flexMin[i]);
+        if (range < 10) { 
+            flexMax[i] = flexMin[i] + 100; // ป้องกัน Range แคบเกินไป (เซนเซอร์อาจจะเสียบไม่แน่น)
+            range = 100; 
         }
 
-        prevIMU = currIMU;
-        sampleCount++;
-        delay(10); 
+        // คำนวณ 15% จาก Range ดิบ
+        int raw_thresh = range * 0.15; 
+
+        // เนื่องจากตอนรันจริงเรา Map ช่วงเป็น 0-1000, 15% ของค่า Map ก็คือ 150
+        t_flex[i] = 150; 
+
+        Serial.print("Finger "); Serial.print(i);
+        Serial.print(": Min = "); Serial.print(flexMin[i]);
+        Serial.print("\tMax = "); Serial.print(flexMax[i]);
+        Serial.print("\tRange = "); Serial.print(range);
+        Serial.print("\t| Raw 15% = "); Serial.print(raw_thresh);
+        Serial.println("\t(Mapped Thres = 150)");
     }
     
-    digitalWrite(PIN_LED, LOW); 
-    Serial.print("   Samples: "); Serial.println(sampleCount);
-
-    // --- Calculate New Thresholds ---
-    Serial.println("   Calculated Noise Levels (Max Delta):");
-    Serial.print("   Accel: "); 
-    Serial.print(maxDiffAccel[0]); Serial.print(", ");
-    Serial.print(maxDiffAccel[1]); Serial.print(", ");
-    Serial.println(maxDiffAccel[2]);
-    
-    Serial.print("   Gyro:  "); 
-    Serial.print(maxDiffGyro[0]); Serial.print(", ");
-    Serial.print(maxDiffGyro[1]); Serial.print(", ");
-    Serial.println(maxDiffGyro[2]);
-
-    // Set Thresholds (Noise * 1.5 + Min Limit)
-    for(int k=0; k<3; k++) {
-        // Accel
-        t_accel[k] = (int)(maxDiffAccel[k] * 1.5);
-        if (t_accel[k] < 20) t_accel[k] = 20; // Min Limit 0.20
-
-        // Gyro
-        t_gyro[k] = (int)(maxDiffGyro[k] * 1.5);
-        if (t_gyro[k] < 500) t_gyro[k] = 500; // Min Limit 5.00
-    }
-
     Serial.println("\n=== CALIBRATION COMPLETED ===");
     isCalibrated = true;
+    digitalWrite(PIN_LED, LOW);
     blinkLED(3, 200);
 }
 
@@ -269,10 +229,11 @@ void loop() {
     String triggerSource = "";
     bool isMoving = false;
 
-    // Check Flex
+    // Check Flex (เปรียบเทียบกับ Threshold ของนิ้วนั้นๆ)
     for(int i=0; i<5; i++) {
-        if (abs((int)current.flex[i] - (int)lastData.flex[i]) > t_flex) {
-            isMoving = true; triggerSource += "F" + String(i) + " "; 
+        if (abs((int)current.flex[i] - (int)lastData.flex[i]) > t_flex[i]) {
+            isMoving = true; 
+            triggerSource += "F" + String(i) + " "; 
         }
     }
     

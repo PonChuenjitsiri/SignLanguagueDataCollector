@@ -217,6 +217,7 @@ void loop() {
     }
 
     int btnState = digitalRead(PIN_BUTTON);
+//    Serial.println(btnState);
     if (btnState == HIGH) { 
         if (!isBtnHeld) {
             isBtnHeld = true;
